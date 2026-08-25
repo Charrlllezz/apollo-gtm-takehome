@@ -1,0 +1,20 @@
+{
+  "name": "vitally-generation-enrollment-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Webhook receiver that generates persona-grounded email copy and writes it back into Apollo via the MCP connector — the one step native Apollo cannot do.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260820.1",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vitally-generation-enrollment-service",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  }
+  // Secrets (ANTHROPIC_API_KEY, APOLLO_MCP_TOKEN, WEBHOOK_SHARED_SECRET) are NOT
+  // declared here — they're pushed via `wrangler secret put <NAME>` so they never
+  // live in a file that could be committed. Locally, `wrangler dev` reads them
+  // from .dev.vars (gitignored).
+}
