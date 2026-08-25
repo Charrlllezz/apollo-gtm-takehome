@@ -1,0 +1,765 @@
+# =============================================================================
+# Vitally × Apollo GTM Engineering — Signal-to-Sequence Engine
+# Execution spec for a Claude Code session with live Apollo MCP access.
+#
+# This file is the machine-readable counterpart to the human-facing diagram:
+#   https://claude.ai/code/artifact/2ba1ea98-4417-47d1-99e0-4f9d5763b743
+#
+# HOW TO USE THIS FILE (for the executing Claude Code session):
+#   1. Read `execution_notes` first — it lists which steps have a real Apollo
+#      MCP tool today vs. which require the Apollo web UI or a raw REST call,
+#      as of the tool surface available in the session that authored this spec
+#      (2026-08-24). Re-verify tool availability before assuming a gap still
+#      exists — Apollo's MCP surface may have grown since.
+#   2. Work top to bottom: stage_1a -> stage_2 -> stage_3 -> stage_4 ->
+#      generation_and_enrollment_service -> stage_5 -> stage_6 ->
+#      metrics_and_optimization_loop. Each stage lists `mcp_tool` (call this
+#      directly), `manual_ui`/`manual_ui_fallback` (no MCP tool known — build
+#      in-app), or both (partial MCP support, confirm before relying on it).
+#   3. `worked_example` at the bottom is the Apollo.io buying committee —
+#      use it to sanity-check the engine before pointing it at a real list.
+#   4. Do not send anything live without explicit human sign-off — this spec
+#      configures targeting/scoring/sequencing logic, not permission to send.
+# =============================================================================
+
+meta:
+  name: vitally_apollo_gtm_signal_engine
+  version: "1.0"
+  author_context: "Apollo GTM Engineer take-home, Charles Ellenburg, 2026-08-24"
+  company: Vitally  # AI-powered Customer Success platform; real Context Center
+                     # already exists in this Apollo account (id: 6a87467726dc71001387b64e)
+  positioning: >
+    Reframed for a RevOps/GTM Engineering buying committee (not Vitally's
+    default VP-of-CS ICP): Vitally's Health Scores + Playbooks + AI copilot
+    as the signal-orchestration layer a scaling, hands-on GTM Engineering
+    function needs to keep white-glove account coverage without linear
+    headcount growth.
+
+execution_notes:
+  plan_access_status_2026-08-25: >
+    Apollo UI shows "Plan: Custom" (upgraded from Trial), but
+    apollo_mixed_people_api_search and apollo_mixed_companies_search still
+    return API_INACCESSIBLE with "not included in your Organization (Trial)
+    plan" verbatim — tested 3x: initial check, retry, and again after a full
+    disconnect/reconnect of the Apollo OAuth session. Team ID and credit
+    balance stayed identical across all three, so this is the same account
+    throughout, not a workspace mismatch. Root cause is unresolved — likely
+    either a backend provisioning step separate from the plan label, or a
+    propagation delay longer than a reconnect forces. Re-tested a 4th time
+    (2026-08-25, full endpoint sweep) — still identical. Tested a 5th time
+    with a fresh, independently-issued master-scoped Apollo API key via
+    direct curl (bypassing this session's MCP connection entirely) — SAME
+    block, with new confirming detail: the error now reads "...even with a
+    master key," which rules out key/OAuth-scope as the cause entirely.
+    This is conclusively an organization-level plan entitlement flag on
+    Apollo's backend that has not been updated, independent of key, session,
+    or auth mechanism. Give this exact detail to Apollo support/the
+    account contact — it's a specific, actionable diagnosis, not a vague
+    "API access isn't working." Treat as needing Apollo-side resolution,
+    not further session-level retries. RE-VERIFY
+    these two endpoints before relying on stage_1a, stage_1b (new_leader,
+    headcount_growth, open_roles-count), and stage_4's contact pull — all
+    four depend on one of these two tools. Everything else in this spec
+    (Context Center, tiering logic, generation service, cadence) does not
+    depend on either blocked tool and is unaffected.
+  sending_infra_confirmed_2026-08-25: >
+    apollo_email_accounts_index: 1 connected mailbox, Gmail
+    (charles@charlesapps.com), default: true. apollo_emailer_schedules_index:
+    1 default schedule "Normal Business Hours," Mon-Fri 8am-5pm
+    America/Los_Angeles, uses each contact's own time zone, skips holidays.
+    Both required by apollo_sequences_create and neither needs setup —
+    manual_steps_checklist item 6 is DONE, not pending.
+  pre_existing_apollo_state_found_2026-08-25: >
+    Two things discovered during the endpoint sweep, from BEFORE this spec
+    was authored, not created by it: (1) apollo_labels_index shows a list
+    named "Apollo Buying Group" (6 contacts, created 2026-08-23, id
+    6a8b4f9591a3530020b06b87) — almost certainly the same 6 buying-committee
+    contacts already found in apollo_contacts_search earlier. Reuse this
+    list directly rather than rebuilding it. A second list, "Test List" (25
+    contacts, id 6a874db9830b40000c4e5099), is also present and unexplained.
+    (2) apollo_tasks_search returned 4 scheduled tasks titled "Workflow -
+    Review pending approvals" (type: workflow_manual_approval_review) — this
+    means a Workflow ALREADY EXISTS in this Apollo account with pending
+    manual approvals. apollo_tasks_show on one of them returned no further
+    detail (no linked workflow name, contact, or content) — no MCP tool
+    surfaces which Workflow or what it's approving. MUST check the Apollo
+    UI's Workflows tab directly before building stage_5 — this may be
+    unrelated prior work, or it may already be a partial version of this
+    build that shouldn't be duplicated.
+  website_visitor_tracker_status_2026-08-25: >
+    apollo_website_visitor_domain_tracker_index confirmed a tracker exists
+    (domain_limit: 3) but returned no configured referrer domains — the
+    behavioral_intent_website_visitor layer in stage_4 has no real data
+    until at least one domain is added via
+    apollo_website_visitor_domain_tracker_update.
+  mcp_tools_confirmed_available:
+    - apollo_organizations_lookup        # free shallow org discovery
+    - apollo_organizations_job_postings  # 1 credit/request; tested live, returned 59 real Apollo.io postings
+    - apollo_organizations_enrich / apollo_organizations_bulk_enrich
+    - apollo_people_match / apollo_people_bulk_match   # waterfall email+phone enrichment
+    - apollo_contacts_search / apollo_contacts_create / apollo_contacts_update
+    - apollo_context_center_show / _update_profile / _update_product  # ICP + product data feeding AI messaging — live-tested, wrote the 4 new personas
+    - apollo_sequences_create / apollo_sequences_update
+    - apollo_emailer_campaigns_add_contact_ids / _approve / _remove_or_stop_contact_ids
+    - apollo_emailer_messages_create / _send_now / _email_send_status
+    - apollo_tasks_create / _bulk_create / _search / _complete / _skip / _update  # call tasks
+    - apollo_labels_create / _index / _add_entity_ids_to_label_names   # list management
+    - apollo_website_visitor_domain_tracker_index / apollo_website_visitors_domain_aggregates
+    - apollo_fields_index   # LIST custom fields only — revealed 5 pre-existing custom contact fields, see note below
+    - apollo_users_api_profile
+  mcp_tools_currently_blocked_2026-08-25:
+    - apollo_mixed_people_api_search   # blocks stage_1b.new_leader AND stage_4's contact pull (same tool, both uses)
+    - apollo_mixed_companies_search    # blocks stage_1a, stage_1b.headcount_growth, stage_1b.open_roles count filter
+    # see plan_access_status_2026-08-25 note above — re-verify before relying on these
+  pre_existing_custom_contact_fields_found: >
+    apollo_fields_index (modality: contact, source: custom) returned 5 fields
+    not created by this spec: "Qualify Contact" (json, readonly), "Messaging
+    Angle" (string), "Outreach Urgency" (picklist: High/Medium/Low),
+    "Qualification Status" (picklist: Qualified/Disqualified), "Reasoning"
+    (textarea). None matches the long-text email-body field
+    generation_and_enrollment_service needs to write to — that field still
+    needs to be created (see gap 3 below). Confirm with the account owner
+    whether these are from unrelated prior work before reusing or ignoring
+    them; "Messaging Angle" and "Reasoning" in particular could overlap with
+    this spec's why_now_rationale / tier design.
+  known_gaps_as_of_2026-08-24: >
+    No MCP tool observed for: (1) Workflows — the trigger/branching automation
+    builder itself is UI-only; the pieces it orchestrates (search, enrich,
+    add-to-sequence, create-task) ARE callable individually via MCP, so a
+    Claude Code session can approximate a Workflow by chaining those calls,
+    but cannot configure the native Workflow trigger UI remotely. Workflows
+    DO support a webhook/external-tool action type per Apollo's own docs —
+    this is the mechanism `generation_and_enrollment_service` below hangs off.
+    (2) AI Research templates (Company News Digest, Person LinkedIn Digest,
+    thought-leadership digest) — no dedicated MCP tool found; these are
+    built and run from the Apollo UI's Research tab today. Resolved in this
+    spec by folding them into `generation_and_enrollment_service` rather than
+    treating each as a separate unexplained gap.
+    (3) Custom field CREATION (apollo_fields_create) — only apollo_fields_index
+    (listing) was available in the authoring session; field creation may
+    require the Apollo REST API directly (see docs.apollo.io/reference/create-a-custom-field)
+    or an updated MCP surface. Re-check before assuming this gap persists.
+    (4) apollo_sequences_search does not exist — use apollo_emailer_campaigns_search
+    to look up existing campaigns/sequences instead.
+    (5) Confirmed directly in `apollo_contacts_update`'s own tool description:
+    the per-contact custom-field merge mechanism stores a "complete,
+    hand-written" email body — Apollo's own docs concede this isn't
+    AI-generated by the platform. Sequences only resolve a merge variable to
+    whatever is already stored in that field at send time; nothing runs live
+    there. This is the root reason full-body generation has to sit outside
+    Apollo — see `generation_and_enrollment_service`.
+  before_any_real_send: >
+    Confirm explicitly with the human operator before calling
+    apollo_emailer_campaigns_approve or apollo_emailer_messages_send_now —
+    these are irreversible, visible actions against real people.
+
+# -----------------------------------------------------------------------------
+# STAGE 1A — Foundational ICP filters (fit; ALL must match; zero credit cost)
+# -----------------------------------------------------------------------------
+stage_1a_foundational_filters:
+  mcp_tool: apollo_mixed_companies_search   # see execution_notes.mcp_tools_currently_blocked_2026-08-25
+  logic: AND
+  filters:
+    organization_num_employees_ranges: ["200,5000"]
+    total_funding_range: { min: 30000000 }   # budget proxy where revenue is undisclosed
+    organization_locations: ["United States", "Canada", "United Kingdom", "European Union"]
+    q_organization_keyword_tags: ["SaaS", "B2B", "software"]
+  output: candidate_account_list
+
+# -----------------------------------------------------------------------------
+# STAGE 1B — Signal overlay (timing; ANY ONE qualifies; applied within 1a's set)
+# -----------------------------------------------------------------------------
+stage_1b_signal_overlay:
+  logic: OR
+  signals:
+    - id: new_leader
+      description: New VP/Director/Head of Sales, Customer Success, or Account Management
+      mcp_tool: apollo_mixed_people_api_search
+      filters:
+        person_titles:
+          ["VP Sales", "VP Customer Success", "VP Revenue Operations", "VP GTM Engineering",
+           "Head of Sales", "Head of Customer Success", "Director of Sales",
+           "Director of Customer Success", "Director of Account Management"]
+        person_seniorities: ["vp", "director", "head"]
+        person_days_in_current_title_range: { min: 0, max: 90 }
+      note: see execution_notes.mcp_tools_currently_blocked_2026-08-25 — same tool also blocks stage_4's contact pull
+
+    - id: open_roles
+      description: 2+ open Customer Success / GTM Engineering / Account Manager roles
+      mcp_tool: apollo_mixed_companies_search   # organization_num_jobs_range + q_organization_job_titles
+      filters:
+        organization_num_jobs_range: { min: 2 }
+        q_organization_job_titles: ["Customer Success", "GTM Engineer", "Account Manager", "Onboarding"]
+      cross_check_tool: apollo_organizations_job_postings   # per-account posting detail
+
+    - id: headcount_growth
+      description: Headcount growth as a revenue-growth proxy
+      mcp_tool: apollo_mixed_companies_search
+      filters:
+        organization_headcount_growth_past_n_months: 6
+        organization_headcount_growth_range: { min: 10 }
+
+# -----------------------------------------------------------------------------
+# STAGE 2 — Qualification gate
+# -----------------------------------------------------------------------------
+stage_2_qualification_gate:
+  rule: "count(stage_1b_signal_overlay.signals matched) >= 1"
+  on_pass:
+    tag_account: strong_target
+    compute_field:
+      name: why_now_rationale
+      source: the matched signal(s) from stage_1b only — structured data, no web research, no AI credit spend yet
+  on_fail:
+    action: discard
+    cost: none
+
+# -----------------------------------------------------------------------------
+# STAGE 3 — Account-level AI research (gated to Strong Targets only)
+# -----------------------------------------------------------------------------
+stage_3_account_research:
+  gate: strong_target == true
+  owner: generation_and_enrollment_service   # see component definition below
+  manual_ui_fallback: "Apollo AI Research tab — template: Company News Digest, if not automating this step yet"
+  mcp_tool: null   # no MCP tool found for AI Research as of 2026-08-24 — see execution_notes
+  est_cost_credits_per_account: 1
+  output_field: company_news_digest
+
+# -----------------------------------------------------------------------------
+# STAGE 4 — Contact pull, tiering (with caps), and person-level enrichment
+# -----------------------------------------------------------------------------
+stage_4_contact_pull_and_tiering:
+  gate: strong_target == true
+  pull:
+    mcp_tool: apollo_mixed_people_api_search   # see execution_notes.mcp_tools_currently_blocked_2026-08-25
+    filter_basis: title/seniority pattern match, per tier below
+  enrich:
+    mcp_tool: apollo_people_bulk_match   # waterfall email + phone
+    fields: [verified_email, direct_dial_phone, time_in_current_role, employment_history,
+             location, seniority, department]
+
+  tier_taxonomy:
+    - tier: 1
+      name: champion
+      title_pattern: ["VP", "Head of"]
+      functions: [Sales, Customer Success, Revenue Operations, GTM Engineering]
+      cap: 2
+    - tier: 2
+      name: influencer
+      title_pattern: ["Manager", "Senior Manager", "Director"]
+      functions: [Sales, Customer Success, Revenue Operations, GTM Engineering]
+      cap: 3
+    - tier: 3
+      name: exec_sponsor
+      title_pattern: ["CRO", "COO", "CEO"]
+      cap: 1
+    - tier: 4
+      name: technical_validator
+      title_pattern: ["Product", "Engineering"]
+      keyword_filter: ["AI", "GTM tooling"]
+      cap: 2
+
+  person_level_research:
+    - layer: native_fields
+      applies_to_tiers: [1, 2, 3, 4]
+      cost: near-zero (standard enrichment)
+    - layer: person_linkedin_digest
+      applies_to_tiers: [1, 2, 3, 4]
+      owner: generation_and_enrollment_service
+      manual_ui_fallback: "Apollo AI Research — Person LinkedIn Post Summary template"
+      mcp_tool: null
+    - layer: thought_leadership_digest
+      description: podcasts, bylined articles, job-posting language mirroring
+      applies_to_tiers: [1, 2, 3]   # NOT tier 4 — credit-gated to the top 3 tiers
+      owner: generation_and_enrollment_service
+      manual_ui_fallback: "Apollo AI Research — custom prompt, run per contact"
+      mcp_tool: null
+      est_cost_credits_per_contact: "1-2"
+    - layer: communication_tone_classifier
+      description: classifies LinkedIn digest tone (data-driven vs. narrative) to pick which AI email variant to send
+      applies_to_tiers: [1, 2, 3, 4]
+      owner: generation_and_enrollment_service
+      cost: cheap — classification pass on already-fetched text, not a new fetch
+      mcp_tool: null
+    - layer: behavioral_intent_website_visitor
+      applies_to_tiers: [1, 2, 3, 4]
+      mcp_tool: apollo_website_visitors_domain_aggregates
+      cost: cheap — passive lookup, not generative spend
+    - layer: network_signals
+      status: SKIPPED — explicitly excluded from this build
+
+  credit_ceiling_worked_example: >
+    At full tier caps (2+3+1+2=8 people), thought-leadership research on
+    Tiers 1-3 (6 people) runs ~6-12 AI credits per account. This is a
+    ceiling, not an average — smaller accounts return thinner committees
+    under the same filters and cost proportionally less.
+
+# -----------------------------------------------------------------------------
+# GENERATION & ENROLLMENT SERVICE — the one step native Apollo cannot do
+# Sits between Stage 4 (tiering/enrichment) and Stage 6 (send/track/branch).
+# Diagram: https://claude.ai/code/artifact/2ba1ea98-4417-47d1-99e0-4f9d5763b743
+#   (Fig. 1.5 — "Where Generation Actually Happens")
+# -----------------------------------------------------------------------------
+generation_and_enrollment_service:
+  why_this_exists_outside_apollo: >
+    Confirmed directly from Apollo's own tool docs, not inferred: the
+    per-contact custom-field merge mechanism (apollo_contacts_update)
+    describes its payload as a "complete, hand-written" email body.
+    Sequences only resolve that field's already-stored value at send
+    time — nothing generates live there. Workflows can fire a webhook out
+    as an action, but there's no confirmed way for a Workflow to pause and
+    wait on that webhook's response before continuing. So this component
+    has to own the full chain itself: generate, write back, then enroll.
+  recommended_implementation:
+    harness: >
+      Claude API Tool Runner (client.beta.messages.tool_runner) — NOT the
+      Claude Agent SDK. That's a different product (Claude Code packaged as
+      a library, with a filesystem/bash coding harness this task doesn't
+      need). Tool Runner is the lighter-weight harness meant for exactly
+      this shape: a custom-tool agent without hand-writing the loop.
+    tool_access: >
+      CORRECTED 2026-08-25 (see tool_access_history below for the full story):
+      Phase B (write-back + enroll) now calls Apollo's REST API DIRECTLY —
+      PUT /v1/contacts/{id} and POST /v1/emailer_campaigns/{id}/add_contact_ids
+      — using the same x-api-key already verified working, not the Claude
+      MCP connector. This isn't a workaround, it's the more correct
+      architecture: by the time Phase B runs, Phase A has already produced
+      validated content and we already know exactly which 2 calls to make
+      with exactly which parameters — routing a deterministic action
+      through a model was solving a problem that didn't exist at this step.
+      Generation (Phase A) stays AI-driven; write-back/enroll is
+      deterministic code.
+    tool_access_history: >
+      Original design used the native MCP connector (least-privilege
+      allowlisted to apollo_contacts_update + apollo_emailer_campaigns_add_contact_ids
+      via default_config/configs). This consistently failed SILENTLY:
+      Anthropic's API returned 200 with zero tools loaded (no error, no
+      tool-definition tokens in usage), while an identical request shape
+      against a known-good public MCP server (Linear) correctly returned an
+      explicit 400 connection error — ruling out both the request
+      structure and the SDK version (upgraded 0.68.0 -> 0.120.0, confirmed
+      real BetaMCPToolset/BetaMCPToolConfig types exist, same failure
+      either way) as the cause. Root cause narrowed to something in the
+      protocol handshake specific to reaching the Worker's own
+      auth-translating proxy, left unresolved rather than spend more time
+      against it under deadline. The proxy itself (auth: Apollo's MCP
+      server rejects Authorization: Bearer (401) but accepts the identical
+      key via x-api-key (200) — Anthropic's connector only ever sends
+      Bearer, so a translating proxy was required regardless) is verified
+      working independently and left in the codebase (/apollo-mcp-proxy in
+      src/index.ts) in case genuine agentic Phase B is worth revisiting.
+    trigger: >
+      A lightweight webhook receiver (single Cloudflare Worker / Lambda is
+      sufficient) — no persistent state to hold, so no container/sandbox
+      needed (rules out Managed Agents' heavier footprint for this narrow task).
+    model: >
+      Sonnet 5 as the default — this is a narrow, repetitive, template-bound
+      generation task, not open-ended reasoning, and it runs once per contact
+      across every qualifying account, so cost compounds. Opus 5 reserved for
+      periodic quality spot-checks rather than every generation.
+    vs_zapier_n8n: >
+      Zapier: per-task pricing gets expensive at this volume, and prompt
+      versioning/retry logic is clunky in a no-code action. n8n: a reasonable
+      choice for fast-prototyping the webhook -> generate -> write-back chain,
+      but the code-based Tool Runner + MCP connector gives git-versioned
+      prompts and proper structured-output validation once this needs to run
+      reliably across many accounts — that's the production target, n8n is
+      the bridge to get there fast.
+  trigger: "webhook action fired by the Stage 5 Workflow once Stage 4 tiering/enrichment is complete"
+  inputs_per_contact:
+    - tier (1-4)
+    - matching persona block from Context Center > Playbooks product
+      (id 6a8b680792fcb3001857db00 — written 2026-08-24, 4 new persona
+      sections appended alongside Vitally's existing 2 CS personas)
+    - why_now_rationale (account-level, Stage 2)
+    - company_news_digest (account-level, Stage 3)
+    - person_linkedin_digest, thought_leadership_digest (tiers 1-3 only), person_tone
+  responsibilities:
+    - 1_generate: full email body, persona-grounded prompt (see Section 5 prompt library)
+    - 2_write_back:
+        mcp_tool: apollo_contacts_update
+        field: typed_custom_fields — long-text contact custom field, merged into the
+               sequence template via {{custom_email_body_seq_N}}
+    - 3_enroll:
+        mcp_tool: apollo_emailer_campaigns_add_contact_ids
+        sequence_ref: champion_influencer_cadence | exec_technical_cadence, per tier
+
+  internal_design:
+    prompt_construction: >
+      Two parts, deliberately separated for prompt-cache stability. `system`
+      holds the stable constraint set from the Section 5 prompt library —
+      word limit, banned-word list, CTA rules, "pull exactly one Pain Point
+      + the persona's Why Now line," "never drop a Killer Question into the
+      copy" — identical on every call. The user turn holds only the volatile
+      per-contact payload from the webhook: tier, persona block, digests,
+      why_now_rationale, contact identity. Stable-prefix-first is what makes
+      this cache correctly at the volume this runs.
+    generation_phase: >
+      Turn 1 is free-text generation (subject + body) with NO tool call
+      forced — generation and rule-compliance are checked as separate
+      concerns, not conflated into one shot.
+    validation_guardrail: >
+      A Tool Runner per-turn hook runs a deterministic check on the
+      generated text BEFORE any tool call is allowed to fire: word count
+      <=110, none of the banned words present, a real CTA exists and isn't
+      "hop on a call." On failure, the hook rejects the turn and re-prompts
+      with the specific violation named (e.g. "134 words and used
+      'seamless' — revise"), not a silent pass-through. This enforcement is
+      the actual reason to prefer Tool Runner over a no-code canvas — a
+      Zapier/n8n AI action can't cheaply gate its own output like this.
+    tool_calling_phase: >
+      Once validated, Claude issues apollo_contacts_update and
+      apollo_emailer_campaigns_add_contact_ids as parallel tool_use blocks
+      in ONE assistant turn; both tool_results return in one user turn per
+      the API's parallel-tool-use contract — not two sequential round-trips.
+    failure_handling: >
+      An Apollo tool error (bad field id, rate limit) returns as
+      tool_result with is_error: true, not a raised exception — Claude sees
+      it and can retry/adjust. If retries exhaust, fail loudly (log +
+      alert); a contact silently never enrolled is a worse failure mode
+      than a visible one, since nothing downstream would notice.
+    no_human_gate_at_enrollment: >
+      Deliberate omission: enrollment itself is safe and reversible (a
+      contact can be pulled via apollo_emailer_campaigns_remove_or_stop_contact_ids).
+      The actual irreversible action — send — is already gated behind
+      apollo_emailer_campaigns_approve downstream in Stage 6. A second
+      approval gate here would add friction without adding safety.
+
+  after_this_point: control returns fully to native Apollo (Stage 6 — send, track, branch)
+
+# -----------------------------------------------------------------------------
+# STAGE 5 — Workflow trigger (native Apollo Workflows; UI-configured)
+# -----------------------------------------------------------------------------
+stage_5_workflow_trigger:
+  manual_ui: "Apollo Workflows builder — no dedicated MCP tool; approximate by chaining stage_6 tool calls directly if building headlessly"
+  trigger_logic: OR
+  trigger_conditions: [new_leader, open_roles, headcount_growth]
+  actions:
+    - applies_to_tiers: [1, 2, 3, 4]
+      action: webhook
+      target: generation_and_enrollment_service
+      delay:
+        tiers_1_2: none        # real-time, on gate pass
+        tiers_3_4: 4 business days
+      note: >
+        Workflow's action is the handoff, not the enrollment itself —
+        generation_and_enrollment_service completes steps 1-3 (generate,
+        write back, enroll) before Stage 6 ever sees the contact.
+
+# -----------------------------------------------------------------------------
+# STAGE 6 — Sequences (multi-channel cadence + branching)
+# -----------------------------------------------------------------------------
+stage_6_sequences:
+  build_tool: apollo_sequences_create   # then apollo_sequences_update for edits
+  enroll_tool: apollo_emailer_campaigns_add_contact_ids   # called BY generation_and_enrollment_service, not the Workflow directly
+  call_task_tool: apollo_tasks_create
+  send_tools: [apollo_emailer_messages_create, apollo_emailer_messages_send_now]
+  approval_tool: apollo_emailer_campaigns_approve   # human sign-off gate before live send
+  email_body_mechanism: >
+    Step 1's body is NOT authored inline in the sequence template — it's a
+    merge variable ({{custom_email_body_seq_1}}) pointing at the long-text
+    contact custom field that generation_and_enrollment_service already
+    wrote before enrollment. `variant_ref` below names which persona-grounded
+    prompt/copy the service used to produce that field's value, not a static
+    template string.
+
+  champion_influencer_cadence:
+    tiers: [1, 2]
+    steps:
+      - step: 1
+        type: email
+        wait_after_previous: 0h
+        variant_ref: email_1_champion_influencer   # see Section 5 messaging doc
+      - step: 2
+        type: linkedin_view_connect
+        wait_after_previous: 2-3h
+      - step: 3
+        type: call_task
+        wait_after_previous: 5-6h
+      - branch: day_1_check
+        wait_after_step: 1
+        wait_duration: 1 business day
+        on_reply: exit_to_ae
+        on_open_no_reply: step_4
+        on_no_engagement: step_5
+      - step: 4
+        id: email_2
+        type: email
+        wait_after_previous: 1-2 days
+        variant_ref: email_2_proof_point
+      - step: 5
+        type: linkedin_engagement_only
+        note: substitutes for email_2 when there was zero open — protects sender reputation
+      - branch: day_5_check
+        on_engaged: continue_nudge
+        on_not_engaged: step_6
+      - step: 6
+        id: breakup_email
+        type: email
+        wait_after_previous: 1 day
+        variant_ref: breakup_email
+        generation_note: >
+          CORRECTED 2026-08-25 — this must still be a generated, per-contact
+          varied body (own custom field + generation call, same pattern as
+          Email 1/2), NOT a single static string reused across every
+          contact. Sending identical text to many recipients is a
+          deliverability fingerprinting risk regardless of how targeted the
+          recipient is. "Low personalization" here means a lighter prompt
+          (no deep digest-grounding needed), not zero variation.
+      - exit: cooldown_90_days
+        loop_back_to: stage_1b_signal_overlay
+    universal_branches:
+      - on_reply: { action: exit_sequence, create_task: route_to_ae, create_deal: true }
+      - on_unsubscribe_or_bounce: { action: suppress_immediately }
+
+  exec_technical_cadence:
+    tiers: [3, 4]
+    steps:
+      - step: 1
+        type: email
+        wait_after_previous: 0h
+      - step: 2
+        type: linkedin_view_only
+        wait_after_previous: 2-3h
+        note: no call step — respects exec/technical norms
+      - branch: day_1_check
+        on_reply: exit_to_ae
+        on_open_no_reply: step_3
+        on_no_engagement: exit_light   # lighter tiers skip the extended nudge chain
+      - step: 3
+        id: email_2
+        type: email
+    universal_branches: same_as_champion_influencer_cadence
+
+# -----------------------------------------------------------------------------
+# METRICS & OPTIMIZATION LOOP
+# Cross-cutting — instruments every stage above, not just send/open/reply.
+# Detailed on purpose; pare down once real volume shows which layers matter.
+# -----------------------------------------------------------------------------
+metrics_and_optimization_loop:
+  layer_1_signal_quality:
+    goal: is the targeting actually predictive, not just plausible
+    metrics:
+      - stage_1a_to_1b_qualification_rate   # too broad/narrow a fit filter shows up here first
+      - per_signal_conversion_rate:
+          tracked_separately_for: [new_leader, open_roles, headcount_growth]
+          why: >
+            Stage 1b uses OR logic deliberately, unweighted. Tracking each
+            signal's conversion separately is what lets weights get set
+            empirically later instead of guessed up front.
+      - signal_staleness_at_time_of_action   # a 3-week-old job posting is a weaker "why now" than a 2-day-old one
+
+  layer_2_generation_cost_efficiency:
+    goal: is generation_and_enrollment_service earning its credit spend
+    metrics:
+      - ai_credit_spend_per_qualified_account: {vs: "6-12 credit ceiling estimate from stage_4"}
+      - validation_guardrail_retry_rate   # proxy for prompt quality, not model quality — see internal_design
+      - tool_call_failure_rate: [apollo_contacts_update, apollo_emailer_campaigns_add_contact_ids]
+      - webhook_fire_to_enrolled_latency   # the Day-0 hour-0/2/5 blitz design assumes this stays near-real-time
+    apollo_tools: [apollo_usage_stats_credit_usage_stats]
+
+  layer_3_engagement:
+    goal: tier-segmented, never blended — the whole premise of Section 4 is that tiers deserve different cadences
+    metrics:
+      - open_rate / reply_rate / linkedin_accept_rate / call_connect_rate: {segmented_by: tier}
+      - branch_path_distribution: [replied_day_1, opened_no_reply, no_engagement, cooldown_loop]
+    apollo_tools: [apollo_analytics_sync_report, apollo_emailer_messages_email_send_status, apollo_conversations_search]
+
+  layer_4_personalization_efficacy:
+    goal: does the credit-gated deep-research layer (thought_leadership_digest, tiers 1-3 only) actually move reply rate
+    metrics:
+      - reply_rate_with_digest_present_vs_absent   # direct A/B, not assumed
+      - tone_classifier_variant_performance   # data-driven vs. narrative — validates the tone-matching mechanism itself
+
+  layer_5_business_outcome:
+    goal: what Adam Carr and Henry Mizel actually track
+    metrics:
+      - meetings_booked_per_qualified_account
+      - opportunities_created_per_qualified_account
+      - signal_fired_to_opportunity_cycle_time
+      - win_rate_by_signal_type   # which of the 3 signals actually predicts closed-won, not just reply
+      - pipeline_dollars_per_ai_credit_spent   # ties cost directly to revenue outcome — the CRO-level number
+
+  optimization_loop:
+    - step: re_weight_signals
+      uses: layer_1_signal_quality.per_signal_conversion_rate
+      action: move stage_1b from unweighted OR to a weighted composite score once volume supports it
+    - step: tune_tier_caps
+      uses: layer_3_engagement + layer_5_business_outcome, segmented by tier
+      action: shrink/drop a tier that never converts (e.g. tier 4); reconsider committee prioritization if tier 2 outperforms tier 1
+    - step: version_prompts
+      uses: layer_2_generation_cost_efficiency.validation_guardrail_retry_rate correlated against layer_3 reply rate
+      action: revise the underperforming persona block in the Section 5 prompt library, not the whole system
+    - step: ab_test_cadence_natively
+      mechanism: apollo_sequences_create supports up to 3 emailer_touches (A/B variants) per step
+      action: test call-timing variants (hour 3 vs. hour 5) instead of guessing
+    - step: validate_loop_back
+      uses: cooldown_90_days re-entry conversion rate
+      action: if re-entries essentially never convert, simplify by dropping the loop rather than carrying the complexity
+
+dynamic_variables:
+  account_level: [why_now_rationale, company_news_digest]
+  person_level:
+    [person_linkedin_digest, person_thought_leadership_digest, person_tone,
+     time_in_role, previous_company, person_visitor_intent]
+
+# -----------------------------------------------------------------------------
+# WORKED EXAMPLE — Apollo.io buying committee (for sanity-checking the engine)
+# -----------------------------------------------------------------------------
+worked_example:
+  account: Apollo.io
+  contacts:
+    - name: Adam Carr
+      title: CRO
+      tier: 3
+      email: adam@apollo.io
+    - name: Eric Quanstrom
+      title: "VP, GTM Engineering & GM, Apollo Labs"
+      tier: 1
+      email: eric.quanstrom@apollo.io
+    - name: Alison Mcdonough
+      title: "Senior Manager, GTM Engineering"
+      tier: 2
+      email: null   # not yet in saved contacts as of authoring session
+    - name: Stephanie Ervin
+      title: "Senior Manager, GTME"
+      tier: 2
+      email: stephanie.ervin@apollo.io
+    - name: Rene Cobar
+      title: "Product Builder, Apollo Labs"
+      tier: 4
+      email: null   # not yet in saved contacts as of authoring session
+    - name: Samuel Elliott
+      title: "Senior Product Manager, AI Apps"
+      tier: 4
+      email: samuel.elliott@apollo.io
+    - name: Henry Mizel
+      title: "SVP, Revenue Operations & Partnerships"
+      tier: 1
+      email: henry@apollo.io
+    - name: John Choi
+      title: "Director, Customer/Revenue Operations"
+      tier: 2
+      email: john.choi@apollo.io
+  note: >
+    Tiers 1 and 2 total 5 people here (2 champions, 3 influencers) — at cap.
+    Tier 3 has exactly 1 (Adam Carr) — at cap. Tier 4 has 2 (Rene, Samuel) —
+    at cap. This account happens to sit exactly at the tier-cap ceiling,
+    which is why its credit math was used as the worst-case scenario above.
+
+# -----------------------------------------------------------------------------
+# MANUAL STEPS — everything outside MCP's reach, in the order to do them.
+# This is the human checklist; everything above this line is either already
+# done (Context Center) or automatable once the plan-access block clears.
+# -----------------------------------------------------------------------------
+manual_steps_checklist:
+  1_resolve_plan_access:
+    what: >
+      apollo_mixed_people_api_search and apollo_mixed_companies_search are
+      still blocked (see execution_notes.plan_access_status_2026-08-25) even
+      after a Custom-plan upgrade and a full connector reconnect.
+    action: >
+      Contact Apollo support/billing directly — ask specifically whether API
+      access needs separate provisioning beyond the plan upgrade itself.
+      Nothing further to try from this session; re-run the two blocked
+      calls once support confirms it's resolved.
+    blocks: [stage_1a, stage_1b (all 3 signals), stage_4's contact pull]
+
+  2_clarify_pre_existing_custom_fields:
+    what: >
+      apollo_fields_index turned up 5 custom contact fields not created by
+      this spec (Messaging Angle, Outreach Urgency, Qualification Status,
+      Reasoning, Qualify Contact — see execution_notes).
+    action: >
+      Confirm whether these are from unrelated prior work. If related,
+      decide whether to reuse "Messaging Angle" / "Reasoning" instead of
+      creating new fields, or keep them separate to avoid collisions.
+
+  2b_check_the_existing_workflow_and_lists:
+    what: >
+      The 2026-08-25 endpoint sweep found state that predates this spec:
+      an "Apollo Buying Group" list (6 contacts) and, more importantly, 4
+      scheduled "Workflow - Review pending approvals" tasks — meaning a
+      Workflow already exists in this account. No MCP tool reveals which
+      Workflow or what it's approving.
+    action: >
+      Open the Apollo UI's Workflows tab and check what this existing
+      Workflow does before building stage_5 — don't build a duplicate.
+      Reuse the "Apollo Buying Group" list (id 6a8b4f9591a3530020b06b87)
+      directly for the worked example instead of rebuilding it. Clear the
+      4 pending approval-review tasks or leave them — confirm they aren't
+      blocking anything before proceeding.
+
+  3_create_the_email_body_custom_field:
+    what: >
+      generation_and_enrollment_service needs a long-text contact custom
+      field to write the generated body into (merged via
+      {{custom_email_body_seq_N}}). No MCP tool creates custom fields
+      (apollo_fields_create was not in the authoring session's toolset).
+    action: >
+      Create it in Apollo UI (Settings > Custom Fields > Contact), or via
+      the REST API directly (docs.apollo.io/reference/create-a-custom-field)
+      if scripting this. Re-check whether apollo_fields_create has since
+      appeared in the MCP toolset before doing this by hand.
+
+  4_build_the_workflow_in_apollo_ui:
+    what: >
+      stage_5_workflow_trigger (the OR-gated trigger + webhook handoff) has
+      no MCP tool — Workflows are UI-only to configure.
+    action: >
+      Build it in Apollo's Workflow builder: 3 OR'd trigger conditions
+      (new_leader, open_roles, headcount_growth) -> webhook action pointing
+      at the Generation & Enrollment Service's receiver URL (does not exist
+      until step 5 is built and deployed).
+    screenshot_needed: >
+      This is the "screenshot of the Workflow you've designed" the
+      assignment's Proof of Work section asks for.
+
+  5_build_and_deploy_the_generation_service:
+    status: DONE — deployed, live-tested, verified against real Apollo state (2026-08-25)
+    what: >
+      Live at https://vitally-generation-enrollment-service.apollo-take-home.workers.dev.
+      Ran /generate against Eric Quanstrom (real contact); independently
+      re-fetched his Apollo contact record afterward and confirmed the
+      generated body landed verbatim in the custom field, he's really
+      enrolled in the sequence, and Apollo auto-paused him because the
+      sequence is inactive (send-safety design working as intended).
+      Phase B uses direct Apollo REST calls, not the Claude MCP connector —
+      see generation_and_enrollment_service.tool_access_history for why.
+    remaining_action: >
+      None for the pipeline itself. Still to do: create "Outbound Email 2"
+      and a breakup-email field once ready to build those cadence steps —
+      the rest of the committee's Email 1s can now run through this same,
+      proven /generate path instead of being hand-drafted. See
+      service/README.md for the full setup/test story.
+
+  6_configure_sending_mailbox_and_schedule:
+    status: DONE — verified 2026-08-25, see execution_notes.sending_infra_confirmed_2026-08-25
+    what: >
+      apollo_sequences_create needs an emailer_schedule_id and a connected
+      sending mailbox.
+    result: >
+      Both confirmed live: 1 default mailbox (Gmail,
+      charles@charlesapps.com) and 1 default schedule ("Normal Business
+      Hours," Mon-Fri 8am-5pm PT). No further action needed — omit
+      emailer_schedule_id when creating the real sequences to use the
+      default, per apollo_sequences_create's own guidance.
+
+  7_human_review_and_send_gate:
+    what: >
+      The two drafted cold emails (Eric Quanstrom, Adam Carr — see Section 5
+      messaging doc) exist as reviewed copy, not as sent or even drafted
+      Apollo objects yet.
+    action: >
+      Decide whether to create them as real Apollo drafts via
+      apollo_emailer_messages_create (safe — saved, not sent) for final
+      review, then explicitly approve the send. Per
+      execution_notes.before_any_real_send, this requires your explicit
+      go-ahead — not something to automate past.
+
+  8_assemble_and_submit:
+    what: Combine everything into the actual take-home deliverable.
+    action: >
+      Presentation deck (Sections 1-7), the workflow screenshot from step 4,
+      the two sent cold emails, and this spec/diagram as supporting
+      documentation -> email to james.thomas@apollo.io per the assignment's
+      submission instructions. This step has no MCP equivalent at all.
