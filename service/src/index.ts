@@ -1,5 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { generateValidatedEmail, writeBackAndEnroll, type Env as AnthropicEnv } from "./generate";
+import {
+  generateValidatedEmail,
+  generateBumpEmail,
+  generateNewAngleEmail,
+  generateBreakupEmail,
+  generateLinkedInConnectNote,
+  generateLinkedInMessage,
+  generateCallPrepNote,
+  generateFollowUpCallPrepNote,
+  writeBackAndEnroll,
+  fetchSiblingSubjects,
+  type Env as AnthropicEnv,
+} from "./generate";
 import type { WebhookPayload } from "./types";
 
 export interface Env extends AnthropicEnv {
@@ -39,13 +51,17 @@ function isValidPayload(body: unknown): body is WebhookPayload {
   if (typeof body !== "object" || body === null) return false;
   const p = body as Record<string, unknown>;
   return (
-    typeof p.contact_id === "string" &&
+    typeof p.email === "string" &&
     [1, 2, 3, 4].includes(p.tier as number) &&
     typeof p.first_name === "string" &&
     typeof p.title === "string" &&
     typeof p.company_name === "string" &&
     typeof p.why_now_rationale === "string" &&
     typeof p.email_body_field_id === "string" &&
+    typeof p.email_2_body_field_id === "string" &&
+    typeof p.email_2_subject_field_id === "string" &&
+    typeof p.email_4_body_field_id === "string" &&
+    typeof p.email_4_subject_field_id === "string" &&
     typeof p.sequence_id === "string" &&
     typeof p.send_email_from_email_account_id === "string"
   );
@@ -86,19 +102,85 @@ export default {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
     try {
+      // ADDED 2026-08-27: account-level de-dup guardrail. Looks up subject
+      // lines already generated for OTHER contacts at this same company —
+      // buying-committee campaigns enroll several people at once, and
+      // without this, two people in the same tier (or even the exec pair)
+      // can get the same angle independently since each generation call
+      // otherwise has no visibility into its siblings. See
+      // fetchSiblingSubjects doc comment in generate.ts.
+      const siblingSubjects = await fetchSiblingSubjects(
+        env,
+        payload.company_name,
+        payload.email,
+        [payload.email_subject_field_id, payload.email_2_subject_field_id, payload.email_3_subject_field_id, payload.email_4_subject_field_id].filter(
+          (id): id is string => Boolean(id),
+        ),
+      );
+
       // Phase A: generate + validate. Cannot touch Apollo — no tools attached.
-      const email = await generateValidatedEmail(client, payload);
+      // Email 2 (bump) always runs — every cadence has that touch. Email 3
+      // (new angle) only exists for Champion/Influencer, so it's skipped
+      // entirely — no wasted generation spend — when the webhook body didn't
+      // include those two field ids (see types.ts doc comment). Email 4
+      // (breakup) always runs — every cadence ends on this step.
+      const email = await generateValidatedEmail(client, payload, siblingSubjects);
+      const bumpEmail = await generateBumpEmail(client, payload, email);
+      const newAngleEmail =
+        payload.email_3_body_field_id && payload.email_3_subject_field_id
+          ? await generateNewAngleEmail(client, payload, email)
+          : null;
+      const linkedInConnectNote = payload.linkedin_connect_note_field_id
+        ? await generateLinkedInConnectNote(client, payload)
+        : null;
+      const linkedInMessage = payload.linkedin_message_field_id
+        ? await generateLinkedInMessage(client, payload, email)
+        : null;
+      // Call 1 fires same day as Email 1 (and the LinkedIn connect note, if
+      // sent) — both are passed in so the note can summarize what's already
+      // gone out, not just the day's signal.
+      const callPrepNote = payload.call_prep_note_field_id
+        ? await generateCallPrepNote(client, payload, email, linkedInConnectNote)
+        : null;
+      // Call 2 fires after Email 2, LinkedIn Message, and Email 3 in both
+      // cadences that have calls (Champion/Influencer) — pass the full
+      // labeled thread, not just the most recent touch, so the note can
+      // summarize everything sent since Call 1.
+      const followUpTouches = [{ label: "Email 2 (bump)", email: bumpEmail }];
+      if (linkedInMessage) followUpTouches.push({ label: "LinkedIn message", email: linkedInMessage });
+      if (newAngleEmail) followUpTouches.push({ label: "Email 3 (new angle)", email: newAngleEmail });
+      const followUpCallPrepNote =
+        payload.call_prep_note_2_field_id && newAngleEmail
+          ? await generateFollowUpCallPrepNote(client, payload, followUpTouches)
+          : null;
+      const breakupEmail = await generateBreakupEmail(client, payload);
 
       // Phase B: write-back + enroll via direct Apollo REST calls — see
       // generate.ts's writeBackAndEnroll doc comment for why this replaced
       // the original Claude+MCP-connector design (2026-08-25).
-      const result = await writeBackAndEnroll(env, payload, email);
+      const result = await writeBackAndEnroll(
+        env,
+        payload,
+        email,
+        bumpEmail,
+        newAngleEmail,
+        linkedInConnectNote,
+        linkedInMessage,
+        callPrepNote,
+        followUpCallPrepNote,
+        breakupEmail,
+      );
 
       return new Response(
         JSON.stringify({
           status: "enrolled",
-          contact_id: payload.contact_id,
+          contact_id: result.contactId,
+          email: payload.email,
           subject: email.subject,
+          bumpSubject: bumpEmail.subject,
+          newAngleSubject: newAngleEmail?.subject ?? null,
+          breakupSubject: breakupEmail.subject,
+          siblingSubjectsAvoided: siblingSubjects,
           wroteField: result.wroteField,
           enrolled: result.enrolled,
         }),
