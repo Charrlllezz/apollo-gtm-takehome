@@ -27,7 +27,7 @@ meta:
   version: "1.0"
   author_context: "Apollo GTM Engineer take-home, Charles Ellenburg, 2026-08-24"
   company: Vitally  # AI-powered Customer Success platform; real Context Center
-                     # already exists in this Apollo account (id: 6a87467726dc71001387b64e)
+                     # already exists in this Apollo account (id: <context_center_id>)
   positioning: >
     Reframed for a RevOps/GTM Engineering buying committee (not Vitally's
     default VP-of-CS ICP): Vitally's Health Scores + Playbooks + AI copilot
@@ -64,7 +64,7 @@ execution_notes:
     depend on either blocked tool and is unaffected.
   sending_infra_confirmed_2026-08-25: >
     apollo_email_accounts_index: 1 connected mailbox, Gmail
-    (charles@charlesapps.com), default: true. apollo_emailer_schedules_index:
+    (<sending mailbox>), default: true. apollo_emailer_schedules_index:
     1 default schedule "Normal Business Hours," Mon-Fri 8am-5pm
     America/Los_Angeles, uses each contact's own time zone, skips holidays.
     Both required by apollo_sequences_create and neither needs setup —
@@ -73,10 +73,10 @@ execution_notes:
     Two things discovered during the endpoint sweep, from BEFORE this spec
     was authored, not created by it: (1) apollo_labels_index shows a list
     named "Apollo Buying Group" (6 contacts, created 2026-08-23, id
-    6a8b4f9591a3530020b06b87) — almost certainly the same 6 buying-committee
+    <list_id>) — almost certainly the same 6 buying-committee
     contacts already found in apollo_contacts_search earlier. Reuse this
     list directly rather than rebuilding it. A second list, "Test List" (25
-    contacts, id 6a874db9830b40000c4e5099), is also present and unexplained.
+    contacts, id <test_list_id>), is also present and unexplained.
     (2) apollo_tasks_search returned 4 scheduled tasks titled "Workflow -
     Review pending approvals" (type: workflow_manual_approval_review) — this
     means a Workflow ALREADY EXISTS in this Apollo account with pending
@@ -368,7 +368,7 @@ generation_and_enrollment_service:
   inputs_per_contact:
     - tier (1-4)
     - matching persona block from Context Center > Playbooks product
-      (id 6a8b680792fcb3001857db00 — written 2026-08-24, 4 new persona
+      (id <playbooks_product_id> — written 2026-08-24, 4 new persona
       sections appended alongside Vitally's existing 2 CS personas)
     - why_now_rationale (account-level, Stage 2)
     - company_news_digest (account-level, Stage 3)
@@ -612,10 +612,10 @@ worked_example:
       title: CRO
       tier: 3
       email: adam@apollo.io
-    - name: Eric Quanstrom
-      title: "VP, GTM Engineering & GM, Apollo Labs"
+    - name: <contact>   # redacted for the public repo
+      title: "VP, GTM Engineering"
       tier: 1
-      email: eric.quanstrom@apollo.io
+      email: null   # redacted
     - name: Alison Mcdonough
       title: "Senior Manager, GTM Engineering"
       tier: 2
@@ -684,7 +684,7 @@ manual_steps_checklist:
     action: >
       Open the Apollo UI's Workflows tab and check what this existing
       Workflow does before building stage_5 — don't build a duplicate.
-      Reuse the "Apollo Buying Group" list (id 6a8b4f9591a3530020b06b87)
+      Reuse the "Apollo Buying Group" list (id <list_id>)
       directly for the worked example instead of rebuilding it. Clear the
       4 pending approval-review tasks or leave them — confirm they aren't
       blocking anything before proceeding.
@@ -718,10 +718,10 @@ manual_steps_checklist:
     status: DONE — deployed, live-tested, verified against real Apollo state (2026-08-25)
     what: >
       Live at https://vitally-generation-enrollment-service.apollo-take-home.workers.dev.
-      Ran /generate against Eric Quanstrom (real contact); independently
-      re-fetched his Apollo contact record afterward and confirmed the
-      generated body landed verbatim in the custom field, he's really
-      enrolled in the sequence, and Apollo auto-paused him because the
+      Ran /generate against the target contact (a real contact); independently
+      re-fetched the contact's Apollo record afterward and confirmed the
+      generated body landed verbatim in the custom field, the contact is really
+      enrolled in the sequence, and Apollo auto-paused the contact because the
       sequence is inactive (send-safety design working as intended).
       Phase B uses direct Apollo REST calls, not the Claude MCP connector —
       see generation_and_enrollment_service.tool_access_history for why.
@@ -739,14 +739,14 @@ manual_steps_checklist:
       sending mailbox.
     result: >
       Both confirmed live: 1 default mailbox (Gmail,
-      charles@charlesapps.com) and 1 default schedule ("Normal Business
+      <sending mailbox>) and 1 default schedule ("Normal Business
       Hours," Mon-Fri 8am-5pm PT). No further action needed — omit
       emailer_schedule_id when creating the real sequences to use the
       default, per apollo_sequences_create's own guidance.
 
   7_human_review_and_send_gate:
     what: >
-      The two drafted cold emails (Eric Quanstrom, Adam Carr — see Section 5
+      The two drafted cold emails (the Tier 1 target contact, Adam Carr — see Section 5
       messaging doc) exist as reviewed copy, not as sent or even drafted
       Apollo objects yet.
     action: >

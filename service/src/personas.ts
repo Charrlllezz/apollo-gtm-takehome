@@ -1,6 +1,6 @@
 /**
  * Mirrors the 4 persona sections written into the real Apollo Context Center
- * (Playbooks product, id 6a8b680792fcb3001857db00, 2026-08-24). Kept here as
+ * (Playbooks product, id <playbooks_product_id>, 2026-08-24). Kept here as
  * the source of truth for prompt construction rather than re-fetched via
  * apollo_context_center_show_product on every call — cheap, and it's the
  * stable half of the prompt (see SYSTEM_PROMPT below on why that matters).
