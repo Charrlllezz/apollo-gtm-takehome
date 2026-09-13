@@ -2,7 +2,7 @@
   "name": "vitally-generation-enrollment-service",
   "version": "1.0.0",
   "private": true,
-  "description": "Webhook receiver that generates persona-grounded email copy and writes it back into Apollo via the MCP connector — the one step native Apollo cannot do.",
+  "description": "Webhook receiver that generates persona-grounded email copy (Claude, no tools attached), then writes it back into Apollo and enrolls the contact via direct Apollo REST calls — the one step native Apollo cannot do.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

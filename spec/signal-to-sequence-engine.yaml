@@ -571,7 +571,7 @@ metrics_and_optimization_loop:
       - tone_classifier_variant_performance   # data-driven vs. narrative — validates the tone-matching mechanism itself
 
   layer_5_business_outcome:
-    goal: what Adam Carr and Henry Mizel actually track
+    goal: what the CRO and the SVP of Revenue Operations actually track
     metrics:
       - meetings_booked_per_qualified_account
       - opportunities_created_per_qualified_account
@@ -608,41 +608,41 @@ dynamic_variables:
 worked_example:
   account: Apollo.io
   contacts:
-    - name: Adam Carr
+    - name: <tier-3 contact>   # all names/emails redacted for the public repo
       title: CRO
       tier: 3
-      email: adam@apollo.io
-    - name: <contact>   # redacted for the public repo
+      email: null
+    - name: <tier-1 contact A>   # the target contact used for the live /generate test
       title: "VP, GTM Engineering"
       tier: 1
-      email: null   # redacted
-    - name: Alison Mcdonough
+      email: null
+    - name: <tier-2 contact A>
       title: "Senior Manager, GTM Engineering"
       tier: 2
-      email: null   # not yet in saved contacts as of authoring session
-    - name: Stephanie Ervin
-      title: "Senior Manager, GTME"
+      email: null
+    - name: <tier-2 contact B>
+      title: "Senior Manager, GTM Engineering"
       tier: 2
-      email: stephanie.ervin@apollo.io
-    - name: Rene Cobar
-      title: "Product Builder, Apollo Labs"
+      email: null
+    - name: <tier-4 contact A>
+      title: "Product, AI"
       tier: 4
-      email: null   # not yet in saved contacts as of authoring session
-    - name: Samuel Elliott
-      title: "Senior Product Manager, AI Apps"
+      email: null
+    - name: <tier-4 contact B>
+      title: "Senior Product Manager, AI"
       tier: 4
-      email: samuel.elliott@apollo.io
-    - name: Henry Mizel
-      title: "SVP, Revenue Operations & Partnerships"
+      email: null
+    - name: <tier-1 contact B>
+      title: "SVP, Revenue Operations"
       tier: 1
-      email: henry@apollo.io
-    - name: John Choi
-      title: "Director, Customer/Revenue Operations"
+      email: null
+    - name: <tier-2 contact C>
+      title: "Director, Revenue Operations"
       tier: 2
-      email: john.choi@apollo.io
+      email: null
   note: >
     Tiers 1 and 2 total 5 people here (2 champions, 3 influencers) — at cap.
-    Tier 3 has exactly 1 (Adam Carr) — at cap. Tier 4 has 2 (Rene, Samuel) —
+    Tier 3 has exactly 1 — at cap. Tier 4 has 2 —
     at cap. This account happens to sit exactly at the tier-cap ceiling,
     which is why its credit math was used as the worst-case scenario above.
 
@@ -717,7 +717,7 @@ manual_steps_checklist:
   5_build_and_deploy_the_generation_service:
     status: DONE — deployed, live-tested, verified against real Apollo state (2026-08-25)
     what: >
-      Live at https://vitally-generation-enrollment-service.apollo-take-home.workers.dev.
+      Live at <worker url>.
       Ran /generate against the target contact (a real contact); independently
       re-fetched the contact's Apollo record afterward and confirmed the
       generated body landed verbatim in the custom field, the contact is really
@@ -746,7 +746,7 @@ manual_steps_checklist:
 
   7_human_review_and_send_gate:
     what: >
-      The two drafted cold emails (the Tier 1 target contact, Adam Carr — see Section 5
+      The two drafted cold emails (the tier-1 target contact and the tier-3 contact — see Section 5
       messaging doc) exist as reviewed copy, not as sent or even drafted
       Apollo objects yet.
     action: >
@@ -761,5 +761,5 @@ manual_steps_checklist:
     action: >
       Presentation deck (Sections 1-7), the workflow screenshot from step 4,
       the two sent cold emails, and this spec/diagram as supporting
-      documentation -> email to james.thomas@apollo.io per the assignment's
+      documentation -> email to <submission address> per the assignment's
       submission instructions. This step has no MCP equivalent at all.
