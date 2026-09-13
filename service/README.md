@@ -14,7 +14,7 @@ Write-back/enroll goes through direct Apollo REST calls, not the Apollo MCP conn
 
 - [x] Code written, typechecked (`npx tsc --noEmit` — clean), deployed via wrangler
 - [x] Apollo API key confirmed working — see auth section below for the real mechanism
-- [x] Cloudflare authenticated, deployed: `https://vitally-generation-enrollment-service.apollo-take-home.workers.dev`
+- [x] Cloudflare authenticated, deployed: `https://<your-worker>.workers.dev`
 - [x] All secrets pushed and live
 - [x] Proxy verified end-to-end — real 200 from Apollo's actual MCP server through the deployed proxy; kept as working infra but NOT used by the current `/generate` path (see below)
 - [x] **`/generate` fully live-tested and verified against real Apollo state** — run against all 8 required buying-group contacts, each independently re-fetched afterward to confirm the generated content was written verbatim and the contact enrolled correctly
@@ -78,10 +78,10 @@ curl -X POST http://localhost:8787/generate \
   -H "content-type: application/json; charset=utf-8" \
   -H "x-webhook-secret: <WEBHOOK_SHARED_SECRET value>" \
   -d '{
-    "email": "eric.quanstrom@apollo.io", "tier": 1,
-    "first_name": "Eric", "title": "VP, GTM Engineering",
-    "company_name": "Apollo.io",
-    "why_now_rationale": "2+ open GTM Engineering / AI Apps roles",
+    "email": "<contact email>", "tier": 1,
+    "first_name": "<first name>", "title": "VP, GTM Engineering",
+    "company_name": "<company>",
+    "why_now_rationale": "2+ open GTM Engineering roles",
     "email_body_field_id": "...", "email_subject_field_id": "...",
     "email_2_body_field_id": "...", "email_2_subject_field_id": "...",
     "email_4_body_field_id": "...", "email_4_subject_field_id": "...",
@@ -93,10 +93,11 @@ curl -X POST http://localhost:8787/generate \
 
 - **Two-phase, not one call.** Phase A (generate + validate) has zero
   Apollo tools attached — it cannot reach Apollo even if the model tried.
-  Phase B (write-back + enroll) is a separate call with exactly two Apollo
-  tools allowlisted via `default_config: {enabled: false}` +
-  per-tool `configs`. This is a real security boundary, not just prompt
-  instruction.
+  Phase B (write-back + enroll) is deterministic code: direct Apollo REST
+  calls (`POST /v1/contacts/search` to resolve the contact, `PUT
+  /v1/contacts/{id}`, `POST /v1/emailer_campaigns/{id}/add_contact_ids`)
+  using the Apollo key held as a Worker secret, which is never sent to
+  Anthropic. This is a real security boundary, not just prompt instruction.
 - **Validation is our own code, not a model self-check.** `generate.ts`'s
   `validate()` runs deterministically (word count, banned words, generic-CTA
   regex) between phases — the model doesn't grade its own homework.

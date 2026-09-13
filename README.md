@@ -1,100 +1,152 @@
-# Vitally × Apollo — Signal-to-Sequence GTM Engine
+# Signal-to-Sequence Engine
 
-**Apollo GTM Engineer take-home submission — Charles Ellenburg**
+A GTM system built inside Apollo that watches target accounts for buying
+signals, pulls and tiers the buying committee, generates every touch of each
+person's cadence under a deterministic guardrail, and enrolls them in the right
+sequence — with a human sign-off before anything sends.
 
-An agentic, signal-triggered outbound system built end-to-end inside Apollo: firmographic and behavioral signal detection → AI-qualified buying-committee pull → persona-specific, guardrailed AI generation (a custom Cloudflare Worker service, not Apollo's built-in text box) → multi-channel sequencing with real branching logic.
+Built in August 2026 as the Apollo GTM Engineer take-home, on a real Apollo
+account, for Vitally (an AI-powered Customer Success platform) pitched to RevOps
+and GTM Engineering leadership. The one step native Apollo can't do — generating
+per-contact copy and getting it into the sequence — is a deployed Cloudflare
+Worker in [`service/`](service/).
 
-**📊 Full interactive presentation: [claude.ai/code/artifact/658414ed-6cdb-4a61-b400-e18f10aac5cd](https://claude.ai/code/artifact/658414ed-6cdb-4a61-b400-e18f10aac5cd)**
+**[Presentation](https://claude.ai/code/artifact/658414ed-6cdb-4a61-b400-e18f10aac5cd)** — architecture, the actual system prompt, real
+messaging variants, screenshots, metrics. This repo is the code and spec behind it.
 
-That page is the primary deliverable — architecture diagrams, the actual system prompt, real messaging variants, screenshots, and the metrics/optimization narrative. This repo is the code and design spec behind it.
+**The assignment, in one line:** pick a company, design its outbound engine
+end to end (value prop, signals, workflow, messaging system, metrics), and
+prove it works with a real Workflow and real sent emails.
 
----
-
-## What this is
-
-**Vitally** (a real AI-powered Customer Success platform) is pitched as a signal-orchestration layer to **Apollo's own GTM Engineering / RevOps leadership** — the required buying group for this assignment. The pitch is framed as a signal-triggered *expansion* play rather than a cold-from-zero one: Vitally's own site already lists Apollo.io as a customer story, so the campaign uses Apollo's own hypergrowth (headcount, hiring, a new CFO) as the trigger to reach the newer GTM Engineering org a land-and-expand motion hasn't touched yet.
-
-The required buying group, mapped to four buying-committee personas so each person gets a genuinely different angle rather than one email reworded eight times:
-
-| Persona | Tier | Contacts |
-|---|---|---|
-| Champion (VP/Head) | 1 | Eric Quanstrom |
-| Influencer (Manager/Sr Mgr/Director) | 2 | Stephanie Ervin, Alison McDonough, John Choi |
-| Executive Sponsor (CRO/COO/CEO) | 3 | Adam Carr, Henry Mizel |
-| Technical Validator (Product/Eng) | 4 | Samuel Elliott, René Cobar |
-
-## Architecture
+## What it does, end to end
 
 ```
-Signal detection (Apollo Workflow)
-  → firmographic filter + headcount growth + open roles + new-leader-hire
-  → Research with AI (account fit-check + per-person LinkedIn digest)
+Signal detection ── Apollo Workflow "Headcount Growth Signal"
+  firmographic fit (200-5000 employees, $25M+ raised, US/CA/UK, software)
+  + headcount growth 10%+ over 6 months · open GTM/RevOps roles · new leader hire
+  → Research with AI: account fit-check, per-person LinkedIn digest
         ↓
-Buying Committee Pull (Apollo Workflow)
-  → contact added to signal-qualified list, pre-filtered by persona
-  → multi-split branch, one lane per tier
-  → Traffic Branch (~33/33/34% send-timing cohorts)
-  → Send Webhook
+Buying committee pull ── Apollo Workflow, one lane per persona
+  Champion (VP/Head) · Influencer (Mgr/Dir) · Exec Sponsor (C-suite) · Technical Validator
+  → traffic split into send-timing cohorts → Send Webhook
         ↓
-Generation & Enrollment Service (this repo, service/)
-  → Claude Sonnet 5, structured-output schema, deterministic guardrail
-  → account-level de-dup check against siblings already generated
-  → writes 4 emails + LinkedIn touches + call-prep notes back to Apollo
-  → enrolls the contact in their persona's sequence
+Generation & Enrollment Service ── this repo, Cloudflare Worker
+  Phase A  generate each touch → validate in code → retry with the violation named
+  Phase B  resolve the contact, write every field back, enroll in the persona's sequence
         ↓
-Apollo Sequence (4 persona-specific cadences)
-  → Email 1 → Email 2 (reply-threaded) → LinkedIn → Call → Email 3 (new thread)
-  → Email 4 (reply-threaded under Email 3) → real branching on reply/interest/OOO
+Apollo Sequences ── four persona-specific cadences
+  Email 1 → Email 2 (bump) → LinkedIn → Call → Email 3 (new angle) → Email 4 (right person?)
+  branching on reply / interest / out-of-office; human approves before anything sends
 ```
 
-Two Apollo Workflows, four Apollo Sequences, one deployed service. Screenshots of all of it are in [`screenshots/`](./screenshots) and embedded directly in the presentation site above.
+Two Apollo Workflows, four Sequences, one deployed service. Live Workflow
+screenshots are in [`screenshots/`](screenshots/); the tier taxonomy, cadences,
+metrics loop and decision history are in the
+[spec](spec/signal-to-sequence-engine.yaml), with a companion
+[diagram](https://claude.ai/code/artifact/2ba1ea98-4417-47d1-99e0-4f9d5763b743).
 
-## Signals used
+## What shipped
 
-1. **Company headcount growth** (10%+ trailing 6-month growth)
-2. **Open roles** (GTM Engineering / RevOps titles, specific offices)
-3. **New leader hire** (a fresh executive hire is a known re-evaluation window)
-4. **Person-level LinkedIn post activity** — the deliberately esoteric one: Research with AI pulls what a person *actually argued*, not just that they posted, and the email's proof point is required to engage with that argument directly
+- The service, deployed on Cloudflare Workers and wired to a real Apollo
+  account. Live-tested against all eight buying-group contacts, each
+  independently re-fetched afterward to confirm the generated content landed
+  verbatim and the contact was enrolled.
+- Real Workflows, four real sequences, real custom fields per touch, a
+  connected sending mailbox. Real emails went out through it.
+- Per contact, the service generates a first-touch pitch, a bump, a new-angle
+  email, a "right person for this?" breakup, a LinkedIn connect note and
+  message, and two rep-facing call-prep notes — the LinkedIn and call items
+  only for the tiers whose cadence has those steps.
 
-## What the generation service actually does
+Not done: targeting still runs off Apollo's UI search — two search endpoints
+were blocked at the account's plan level (diagnosis in the spec's `execution_notes`).
 
-This is the one part of the pipeline Apollo's own platform can't do natively, so it's a purpose-built service — not a prompt typed into Apollo's AI field.
+## Why generation sits outside Apollo
 
-- **Four AI-generated touches per contact**, each with its own job: a first-touch pitch (Email 1), a short bump follow-up (Email 2), a fresh-thread new-angle email (Email 3), and a genuine "right person for this?" breakup email (Email 4) — the last one used to be a static template shared by everyone; see [Notable engineering decisions](#notable-engineering-decisions-and-bugs-found) below for why that changed.
-- **Persona-specific CTAs that name a concrete offer** — a Loom recording for Champion/Influencer/Technical Validator (each scoped to what that function would actually want to see), a one-page benchmark for Executive Sponsors (a number and a document, never a demo).
-- **Structured output, not freeform text** — Claude is constrained to a Zod schema (hook / mechanism / proof point / CTA as four named fields), so subject lines and structure don't drift contact to contact.
-- **A deterministic code-side guardrail** between generation and write-back — word limits, banned words, banned generic CTAs, filler/placeholder detection — with the specific violation re-prompted on failure, not a bare retry.
-- **An account-level de-dup guardrail** — before generating, the service looks up what subject lines have already been written for other contacts at the same company, and requires the new one to be substantively different. This exists because a buying-committee campaign enrolls several people at one account at once, and without it, two peers can independently get the same angle.
+Apollo's own tool docs describe the per-contact custom-field merge as a
+"complete, hand-written" body: a sequence resolves the merge tag to whatever is
+already stored, nothing generates live. A Workflow can fire a webhook but can't
+wait on its response. So one component owns the whole chain — generate, write
+back, enroll — then hands control back to Apollo to send, track and branch.
 
-See [`service/README.md`](./service/README.md) for the full technical write-up, setup instructions, and debugging history.
+## The interesting decisions
 
-## Notable engineering decisions and bugs found
+**The Apollo key never reaches Anthropic.** Generation (Phase A) is a Claude
+call with no tools attached — it cannot touch Apollo even if the model tried.
+Write-back and enrollment (Phase B) are direct Apollo REST calls from the
+Worker, with the key held as a Worker secret. That boundary is structural, not
+a prompt instruction.
 
-Surfaced during build and fixed, not swept under the rug — these are worth knowing before reviewing the code:
+**Phase B never needed a model.** The original design routed write-back
+through Claude with the Apollo MCP connector, allowlisted to two tools. It
+failed silently — a 200 with zero tools loaded — while the same request against
+a known-good MCP server returned a proper error. Rather than keep debugging
+under deadline, the fix was to notice that by the time Phase B runs, the exact
+calls and parameters are already known; deterministic code is the more correct
+shape. The auth-translating proxy the connector route needed (Apollo's MCP
+server wants `x-api-key`; Anthropic's connector only sends `Bearer`) is
+verified working and kept at `/apollo-mcp-proxy`.
 
-- **Apollo's own webhook merge-tag resolution is intermittently unreliable.** The `{{contact.email}}` field sent by Apollo's "Send Webhook" step occasionally resolves to the literal unresolved placeholder string instead of a real email, causing `HTTP 422 invalid character` errors. Apollo's automatic retry usually recovers it; documented as a real platform finding, not assumed to be our bug.
-- **A `Traffic Branch: Split by percentage` step delays ~2/3 of enrolled contacts by 1–2 real days by design** — a deliberate send-time experiment, but it means most contacts won't get a same-day touch, which matters if you're validating on a deadline.
-- **`max_tokens: 1024` was silently truncating output for specific contacts.** One contact failed generation 8/8 times with a reproducible "unterminated JSON string" error — isolated to a long job title + a tight tier word limit + several simultaneous constraints. Bumped to `2048` and it succeeded immediately; documented in `generate.ts`.
-- **A name-encoding bug corrupted one contact's accented character** (`René` → `Ren�`) in AI-generated custom fields specifically, while Apollo's own system contact record stored it correctly — isolated to the generation pipeline, fixed, and verified by re-reading the live field back from Apollo.
-- **The original "breakup" email (Email 4) was a static, unpersonalized template** shared identically by every contact in a sequence — safe for a single-contact cadence, but a real problem at buying-committee scale, since several required contacts share the same persona sequence. Rebuilt as a fifth generated touch with its own prompt.
+**Validation is code, not a model grading its own homework.** `validate()` in
+[`service/src/generate.ts`](service/src/generate.ts) checks word limits per
+touch and tier, a 20-entry banned-word list, generic-CTA phrasing, filler and
+placeholder markers, truncation (no terminal punctuation), and LinkedIn's
+real 300-character cap. On failure it re-prompts with the specific violation
+named, up to three attempts, then fails loudly — a contact silently never
+enrolled is the worse failure mode.
+
+**Two peers at one company must not get the same email.** A committee
+campaign enrolls several people at one account at once, and each generation
+call otherwise has no idea what its siblings got. Before writing Email 1, the
+service looks up the subject lines already generated for other contacts at
+the same company (capped to the ten most recent) and requires a substantively
+different angle. The lookup fails open: a missed duplicate is a better failure
+than a stalled webhook.
+
+**Persona CTAs name a concrete artifact.** A Loom recording scoped to what a
+Champion, Influencer, or Technical Validator would want to see; a one-page
+benchmark for an Executive Sponsor — a number and a document, never a demo.
+Email 4 was a static template in the sequence step; at committee scale that
+lands byte-identical across peers, so it became a generated touch too.
+
+**Structured output, assembled server-side.** Identical inputs were producing
+meaningfully different emails run to run. The fix is a Zod schema forcing four
+named fields — hook, mechanism, proof_point, cta — each described by its *form*:
+one sentence, never opens with the recipient's name, an empty string rather than
+an invented proof point. Paragraph joins and greetings are done in code.
+
+**Found live, kept on the record.** Apollo's webhook merge tag for the contact
+email occasionally arrives unresolved (a 422, recovered by Apollo's retry); the
+webhook picker exposes no contact ID, so the service resolves the contact from
+its email; `max_tokens: 1024` truncated JSON for one contact eight times out of
+eight until 2048; an accented name corrupted until the REST calls declared
+`charset=utf-8`. Full list in [`service/README.md`](service/README.md).
 
 ## Repo layout
 
 ```
-service/            Generation & Enrollment Service — TypeScript, Cloudflare Workers
-  src/
-    index.ts         Webhook entry point, payload validation, orchestration
-    generate.ts       Claude generation calls, guardrail, de-dup lookup, Apollo write-back
-    personas.ts       The 4 buying-committee personas, every system prompt, banned words
-    types.ts          WebhookPayload contract
-  README.md           Setup, deploy, testing, and full debugging history
-spec/
-  signal-to-sequence-engine.yaml   Full design spec — source of truth for every architecture decision
-screenshots/         Real screenshots from the live, deployed Apollo instance
+service/                              Generation & Enrollment Service (TypeScript, Cloudflare Workers)
+  src/index.ts                        webhook entry, shared-secret auth, orchestration, MCP auth proxy
+  src/generate.ts                     guardrail, retry loop, de-dup lookup, Apollo write-back + enroll
+  src/personas.ts                     the four personas and offers, every system prompt, banned words
+  src/types.ts                        webhook payload contract
+  README.md                           setup, deploy, curl example, full debugging history
+spec/signal-to-sequence-engine.yaml   the design: stages, cadences, metrics loop, decision history
+screenshots/                          the live Apollo Workflows
 ```
 
-## Live service
+## Run it
 
-`https://vitally-generation-enrollment-service.apollo-take-home.workers.dev`
+```bash
+cd service && npm install
+# .dev.vars (gitignored): ANTHROPIC_API_KEY, APOLLO_MCP_TOKEN, WEBHOOK_SHARED_SECRET,
+#                         MCP_PROXY_SHARED_SECRET, MCP_PROXY_URL
+npm run dev                  # http://localhost:8787
+npm run deploy               # after `npx wrangler login`; then `wrangler secret put` each secret
+```
 
-The `/generate` endpoint is shared-secret protected and expects the payload shape defined in `service/src/types.ts`. See `service/README.md` for a working `curl` example.
+POST to `/generate` with the `x-webhook-secret` header; the payload is typed in
+[`service/src/types.ts`](service/src/types.ts), with a working curl in
+[`service/README.md`](service/README.md). With a real Apollo key a local run
+writes to your real Apollo account. Enrollment is reversible; sending is gated
+behind the sequence being active and approved.
